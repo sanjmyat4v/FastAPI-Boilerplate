@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     )
 
     app_env: str = Field(default="development")
+    app_version: str = Field(default="1.0.0")
 
     # JWT
     jwt_secret_key: str = Field(
