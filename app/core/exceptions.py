@@ -63,6 +63,14 @@ class NotFoundError(BaseException):
     def __init__(self, item: str) -> None:
         super().__init__(f"{item} not found.")
 
+# User not found error 404
+class UserNotFoundError(BaseException):
+    error_code = "USER_NOT_FOUND"
+    status_code = 404
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
 
 # Rate limit error
 # TODO: Implement rate limit exception properly
@@ -70,9 +78,12 @@ class RateLimitExceededError(BaseException):
     error_code = "RATE_LIMIT_EXCEEDED"
     status_code = 429
 
-    def __init__(self, retry_after_seconds: int) -> None:
+    def __init__(self, user_email: str, retry_after_seconds: int) -> None:
         self.retry_after_seconds = retry_after_seconds
-        super().__init__(f"Rate limit exceeded. Retry after {retry_after_seconds} seconds.")
+        super().__init__(
+            f"Rate limit exceeded for user {user_email}. " 
+            f"Retry after {retry_after_seconds} seconds."
+        )
 
 # Dependency failures 503
 class DatabaseUnavailableError(BaseException):

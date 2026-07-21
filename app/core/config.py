@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     redis_port: int = Field(default=6379)
     redis_password: str = Field(default="")
 
+    # -------------------------------------------------------------------------
+    # Rate Limiting
+    # -------------------------------------------------------------------------
+    rate_limit_max: int = Field(default=1000, ge=1)
+
     @computed_field
     @property
     def redis_url(self) -> str:
