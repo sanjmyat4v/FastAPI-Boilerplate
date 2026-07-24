@@ -90,7 +90,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # -------------------------------------------------------------------------
     # FastAPI / Pydantic request validation errors (HTTP 422)
     # -------------------------------------------------------------------------
-    @app.exception_handler(BaseException)
+    @app.exception_handler(RequestValidationError)
     async def request_validation_handler(
         request: Request,
         exc: RequestValidationError,

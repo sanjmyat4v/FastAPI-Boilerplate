@@ -25,17 +25,21 @@ class RegisterUserRequest(BaseModel):
     email: str = Field(
         ...,
         max_length=255,
-        description="User's email address."
+        examples=["user@example.com"],
+        pattern=r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$",
+        description="User's email address.",
     )
     username: str = Field(
         ...,
         max_length=100,
-        description="Username."
+        examples=["user1"],
+        description="Username.",
     )
     password: str = Field(
         ...,
         max_length=255,
-        description="User's password"
+        examples=["SupeSecret123!"],
+        description="User's password",
     )
 
     @field_validator("email", mode="before")
@@ -45,7 +49,7 @@ class RegisterUserRequest(BaseModel):
 
     model_config = {
         "str_strip_whitespace": True,
-        "extra": "forbid"
+        "extra": "forbid",
     }
 
 class RegisterUserResponse(BaseModel):

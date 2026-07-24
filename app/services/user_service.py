@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -19,14 +19,39 @@ from app.shared.utils.password import get_password_hash
 logger = logging.getLogger(__name__)
 
 
-async def _validate_user(db: AsyncSession, email: str) -> None:
-    stmt = select(User).where(User.email == email)
+async def _validate_user(db: AsyncSession, email: str, username: str) -> None:
+    stmt = select(User).where(or_(User.email == email, User.username == username))
     result = await db.execute(stmt)
-    exists = result.scalar_one_or_none()
+    existing_user = result.scalar_one_or_none()
 
-    if exists:
-        raise ValidationError(f"User with {email} email already exists.")
+    if existing_user:
+        if existing_user.email == email:
+            raise ValidationError(f"User with {email} email already exists.")
+        if existing_user.username == username:
+            raise ValidationError(f"Username '{username}' is already taken.")
 
+async def get_user_for_auth(
+    identifier: str, db: AsyncSession
+) -> User | None:
+    stmt = select(User).where(
+        or_(User.email == identifier, User.username == identifier)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+async def get_user_by_email_or_username(
+    identifier: str, db: AsyncSession
+) -> UserInfo:
+    """
+    Fetches a user by either email or username.
+    Useful for login endpoints that accept either credential type.
+    """
+    condition = or_(User.email == identifier, User.username == identifier)
+    return await _get_user_by(
+        db,
+        condition,
+        f"User with identifier '{identifier}' not found.",
+    )
 
 async def _get_user_by(
     db: AsyncSession,
@@ -71,7 +96,7 @@ async def add_user(
     db: AsyncSession,
     request: RegisterUserRequest,
 ) -> RegisterUserResponse:
-    await _validate_user(db, request.email)
+    await _validate_user(db, request.email, request.username)
 
     password_hash = get_password_hash(request.password)
 
@@ -84,8 +109,4 @@ async def add_user(
     await db.flush()
     await db.refresh(user_entry)
 
-    return RegisterUserResponse(
-        id=user_entry.id,
-        email=user_entry.email,
-        username=user_entry.username,
-    )
+    return RegisterUserResponse.model_validate(user_entry)

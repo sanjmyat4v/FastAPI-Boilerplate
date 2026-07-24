@@ -28,6 +28,13 @@ class AuthTokenInvalidError(BaseException):
     def __init__(self, message: str = "Token is invalid or expired.") -> None:
         super().__init__(message)
 
+class InvalidCredentialsError(BaseException):
+    error_code = "INVALID_CREDENTIALS"
+    status_code = 401
+
+    def __init__(self, message: str = "Invalid credentials.") -> None:
+        super().__init__(message)
+
 # Forbidden Errors 403
 class ForbiddenError(BaseException):
     error_code = "FORBIDDEN"

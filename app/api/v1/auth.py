@@ -8,7 +8,7 @@ from app.schemas.user_schemas import (
     RegisterUserRequest, RegisterUserResponse,
 )
 from app.schemas.error_schemas import ErrorResponse
-from app.services import user_service
+from app.services.user_service import add_user
 from app.services.cache_service import check_and_increment_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Auth router"])
 
 async def _enforce_rate_limit(redis: Redis, user_email: str) -> None:
-    allowed, retry_after = check_and_increment_rate_limit(redis, user_email)
+    allowed, retry_after = await check_and_increment_rate_limit(redis, user_email)
     if not allowed:
         raise RateLimitExceededError(user_email=user_email, retry_after_seconds=retry_after)
 
@@ -26,4 +26,4 @@ async def register(
     request: RegisterUserRequest,
     db: DBSession, redis: RedisClient,
 ) -> RegisterUserResponse:
-    pass
+    return await add_user(db=db, request=request)
