@@ -3,8 +3,6 @@ from datetime import datetime
 from sqlalchemy import (
     Index,
     String,
-    Enum,
-    Text,
     Boolean,
     DateTime,
     literal,

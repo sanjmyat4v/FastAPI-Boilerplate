@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     )
     access_token_expire_minutes: int = Field(default=60, ge=1)
     refresh_token_expire_days: int = Field(default=30, ge=1)
+    refresh_reuse_grace_seconds: int = Field(default=30, ge=1)
 
 
     # Database

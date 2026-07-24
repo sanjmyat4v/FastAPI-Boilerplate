@@ -7,7 +7,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import AuthenticatedUser, decode_access_token, extract_bearer_token
+from app.core.security import decode_access_token, extract_bearer_token
+from app.schemas.common_schemas import AuthenticatedUser
 from app.core.database import get_db as _get_db
 from app.core.config import get_settings
 from app.core.redis_client import get_redis as _get_redis

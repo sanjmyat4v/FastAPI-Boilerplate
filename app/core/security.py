@@ -8,16 +8,11 @@ from jose.exceptions import ExpiredSignatureError
 
 from app.core.config import get_settings
 from app.core.exceptions import AuthTokenInvalidError, AuthTokenMissingError
+from app.schemas.common_schemas import AuthenticatedUser
 
 logger = logging.getLogger(__name__)
 password_hash = PasswordHash.recommended()
 
-
-@dataclass
-class AuthenticatedUser:
-    """Represents a verified, authenticated session."""
-    username: str
-    jti: str
 
 # ---------------------------------------------------------------------------
 # Token creation and storage
@@ -62,7 +57,7 @@ def decode_access_token(token: str) -> AuthenticatedUser:
         payload = jwt.decode(
             token,
             settings.jwt_secret_key,
-            algorithms=["HS-256"],
+            algorithms=["HS256"],
             options={"verify_exp": True},
         )
     except ExpiredSignatureError:

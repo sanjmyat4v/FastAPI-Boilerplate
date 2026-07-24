@@ -21,24 +21,25 @@ class UserInfo(BaseModel):
 
     model_config = {"from_attributes": True}
 
+
 class RegisterUserRequest(BaseModel):
     email: str = Field(
         ...,
         max_length=255,
-        examples=["user@example.com"],
+        examples=["john@example.com"],
         pattern=r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$",
         description="User's email address.",
     )
     username: str = Field(
         ...,
         max_length=100,
-        examples=["user1"],
+        examples=["johne_doe"],
         description="Username.",
     )
     password: str = Field(
         ...,
         max_length=255,
-        examples=["SupeSecret123!"],
+        examples=["SecurePass123!"],
         description="User's password",
     )
 

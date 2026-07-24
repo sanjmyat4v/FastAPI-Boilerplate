@@ -23,7 +23,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Redis key patterns for token storage
 # ---------------------------------------------------------------------------
-REFRESH_TOKEN_KEY_PREFIX = "app:auth:refresh:"   # app:auth:refresh:{jti}
+REFRESH_PREFIX = "app:auth:refresh:"
+SESSION_PREFIX = "app:auth:session:"
+FAMILY_PREFIX = "app:auth:family:"
+
+# Atomically: read the primary key, and if it hasn't already been consumed,
+# tombstone it (prefix with "USED:") for a short grace window instead of
+# deleting it outright. If it HAS already been tombstoned, we return that
+# tombstoned value so the caller can detect reuse — this is what makes
+# reuse detection race-safe: two concurrent requests can't both "win".
+
+_CONSUME_SCRIPT = """
+local value = redis.call('GET', KEYS[1])
+if not value then
+    return false
+end
+if string.sub(value, 1, 5) == 'USED:' then
+    return value
+end
+redis.call('SET', KEYS[1], 'USED:' .. value, 'EX', ARGV[1])
+return value
+"""
 
 # ---------------------------------------------------------------------------
 # Auth service
@@ -47,100 +67,131 @@ async def authenticate_user(
         created_at=user.created_at
     )
 
+async def create_user_session(redis: Redis, username: str) -> tuple[str, str]:
+    jti = str(uuid.uuid4())
+    family_id = str(uuid.uuid4())
+    access_token = _create_access_token(username=username, jti=jti)
+    refresh_token = await _create_and_store_refresh_token(redis, username, jti, family_id)
+    return access_token, refresh_token
+
 
 async def _create_and_store_refresh_token(
     redis: Redis,
     username: str,
     jti: str,
+    family_id: str,
 ) -> str:
-    """
-    Creates a refresh token and stores it securely in Redis.
-
-    The refresh token itself is a random opaque string (not a JWT) stored
-    in Redis under app:auth:refresh:{jti}. The JTI is embedded in the access
-    token — this links the access/refresh pair without exposing the refresh
-    token value in the JWT.
-
-    TTL = REFRESH_TOKEN_EXPIRE_DAYS.
-    """
     settings = get_settings()
     raw_refresh_token = secrets.token_urlsafe(48)
-    token_hash = hashlib.sha256(raw_refresh_token.encode()).hexdigest()
+    refresh_hash = hashlib.sha256(raw_refresh_token.encode()).hexdigest()
 
-    key = f"{REFRESH_TOKEN_KEY_PREFIX}{jti}"
+    refresh_key = f"{REFRESH_PREFIX}{refresh_hash}"
+    session_key = f"{SESSION_PREFIX}{jti}"
+    family_key = f"{FAMILY_PREFIX}{family_id}"
     ttl_seconds = settings.refresh_token_expire_days * 86400
+    payload = f"{username}:{jti}:{family_id}"
 
     try:
-        await redis.set(
-            key,
-            f"{username}:{token_hash}",
-            ex=ttl_seconds,
-        )
+        pipe = redis.pipeline(transaction=True)
+        pipe.set(refresh_key, payload, ex=ttl_seconds)
+        pipe.set(session_key, refresh_hash, ex=ttl_seconds)
+        pipe.set(family_key, jti, ex=ttl_seconds)
+        await pipe.execute()
     except RedisError as exc:
         logger.error("Failed to store refresh token in Redis: %s", exc)
         raise AuthTokenInvalidError("Could not create session. Please try again.")
-    
+
     return raw_refresh_token
 
-async def refresh_access_token(
-    refresh_token: str,
-    jti: str,
-    redis: Redis,
-) -> tuple[str, str]:
-    """
-    Validates a refresh token and issues a new access token + refresh token.
-    Implements refresh token rotation — old refresh token is deleted on use.
 
-    Args:
-        refresh_token: The opaque refresh token string from the client.
-        jti:           The JTI from the (possibly expired) access token.
-        redis:         Redis client.
-
-    Returns:
-        Tuple of (new_access_token, new_refresh_token).
-
-    Raises:
-        AuthTokenInvalidError if the refresh token is invalid or expired.
-    """
-    key = f"{REFRESH_TOKEN_KEY_PREFIX}{jti}"
+async def refresh_access_token(refresh_token: str, redis: Redis) -> tuple[str, str]:
+    settings = get_settings()
+    refresh_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
+    refresh_key = f"{REFRESH_PREFIX}{refresh_hash}"
 
     try:
-        stored = await redis.get(key)
+        stored = await redis.eval(
+            _CONSUME_SCRIPT, 1, refresh_key, str(settings.refresh_reuse_grace_seconds)
+        )
     except RedisError as exc:
-        logger.error("Failed to get refresh token from Redis: %s", exc)
+        logger.error("Failed to consume refresh token in Redis: %s", exc)
         raise AuthTokenInvalidError("Session store unavailable. Please login again.")
-    
+
     if not stored:
         raise AuthTokenInvalidError("Refresh token has expired or been revoked. Please login again.")
-    
-    parts = stored.split(":",1) # type: ignore
-    if len(parts) != 2 or parts[1] != refresh_token:
-        raise AuthTokenInvalidError("Invalid refresh token.")
-    
-    username = parts[0]
 
-    await redis.delete(key)
+    stored = stored.decode() if isinstance(stored, bytes) else stored
+
+    if stored.startswith("USED:"):
+        _, username, jti, family_id = stored.split(":", 3)
+        logger.warning(
+            "Refresh token reuse detected (user=%s, family=%s) — revoking session",
+            username, family_id,
+        )
+        await _revoke_family(redis, family_id)
+        raise AuthTokenInvalidError(
+            "Refresh token reuse detected. Session revoked for safety. Please login again."
+        )
+
+    username, jti, family_id = stored.split(":", 2)
+
+    # Primary key is already tombstoned by the script; clean up its secondary index.
+    try:
+        await redis.delete(f"{SESSION_PREFIX}{jti}")
+    except RedisError as exc:
+        logger.warning("Failed to clean up session index for jti=%s: %s", jti, exc)
 
     new_jti = str(uuid.uuid4())
-    new_access_token = _create_access_token(
-        username, new_jti   # type: ignore
-    )
-    new_refresh_token = await _create_and_store_refresh_token(
-        redis, username, new_jti    # type: ignore
-    )
+    new_access_token = _create_access_token(username=username, jti=new_jti)
+    new_refresh_token = await _create_and_store_refresh_token(redis, username, new_jti, family_id)
 
     logger.info("Refresh token rotated for user: %s", username)
     return new_access_token, new_refresh_token
 
 
 async def revoke_session(jti: str, redis: Redis) -> None:
-    """
-    Revokes a session by deleting the refresh token from Redis.
-    Called on logout.
-    """
-    key = f"{REFRESH_TOKEN_KEY_PREFIX}{jti}"
+    """Revoke a single session, e.g. on explicit logout using the current access token's jti."""
+    session_key = f"{SESSION_PREFIX}{jti}"
     try:
-        await redis.delete(key)
+        refresh_hash = await redis.get(session_key)
+        family_id = None
+        if refresh_hash:
+            refresh_hash = refresh_hash.decode() if isinstance(refresh_hash, bytes) else refresh_hash
+            refresh_payload = await redis.get(f"{REFRESH_PREFIX}{refresh_hash}")
+            if refresh_payload:
+                refresh_payload = refresh_payload.decode() if isinstance(refresh_payload, bytes) else refresh_payload
+                _, _, family_id = refresh_payload.split(":", 2)
+
+        pipe = redis.pipeline(transaction=True)
+        pipe.delete(session_key)
+        if refresh_hash:
+            pipe.delete(f"{REFRESH_PREFIX}{refresh_hash}")
+        if family_id:
+            pipe.delete(f"{FAMILY_PREFIX}{family_id}")
+        await pipe.execute()
         logger.info("Session revoked (jti=%s)", jti)
     except RedisError as exc:
         logger.warning("Failed to revoke session in Redis: %s", exc)
+
+
+async def _revoke_family(redis: Redis, family_id: str) -> None:
+    """Kill the current live token in a family. Called when a rotated-out (already-used)
+    refresh token is replayed — a strong signal of theft."""
+    family_key = f"{FAMILY_PREFIX}{family_id}"
+    try:
+        active_jti = await redis.get(family_key)
+        if not active_jti:
+            return
+        active_jti = active_jti.decode() if isinstance(active_jti, bytes) else active_jti
+        session_key = f"{SESSION_PREFIX}{active_jti}"
+        refresh_hash = await redis.get(session_key)
+
+        pipe = redis.pipeline(transaction=True)
+        pipe.delete(session_key)
+        pipe.delete(family_key)
+        if refresh_hash:
+            refresh_hash = refresh_hash.decode() if isinstance(refresh_hash, bytes) else refresh_hash
+            pipe.delete(f"{REFRESH_PREFIX}{refresh_hash}")
+        await pipe.execute()
+    except RedisError as exc:
+        logger.error("Failed to revoke token family %s: %s", family_id, exc)
