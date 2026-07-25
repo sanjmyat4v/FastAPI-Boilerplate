@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.api.v1.router import api_v1_router
 from app.core.config import get_settings
 from app.core.database import init_db, close_db
+from app.core.rate_limit import GlobalRateLimitMiddleware
 from app.core.error_handler import register_exception_handlers
 from app.core.redis_client import init_redis, close_redis
 
@@ -124,6 +125,11 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     )
+
+    # Rate limit middleware
+    app.add_middleware(GlobalRateLimitMiddleware, times=120, seconds=60)
+
+
     # ------------------------------------------------------------------
     # Exception Handlers
     # ------------------------------------------------------------------

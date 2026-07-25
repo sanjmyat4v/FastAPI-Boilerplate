@@ -1,8 +1,8 @@
 import logging
-from fastapi import APIRouter, status
+from fastapi import APIRouter, status, Depends
 
 from app.core.dependencies import DBSession, RedisClient, CurrentUser
-from app.core.exceptions import RateLimitExceededError
+from app.core.rate_limit import rate_limit_by_ip, rate_limit_by_user
 from app.services import auth_service
 from app.services.user_service import get_user_by_username
 from app.schemas.user_schemas import (
@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Auth router"])
 
-async def _enforce_rate_limit(redis: RedisClient, user_email: str) -> None:
-    allowed, retry_after = await check_and_increment_rate_limit(redis, user_email)
-    if not allowed:
-        raise RateLimitExceededError(user_email=user_email, retry_after_seconds=retry_after)
+# async def _enforce_rate_limit(redis: RedisClient, user_email: str) -> None:
+#     allowed, retry_after = await check_and_increment_rate_limit(redis, user_email)
+#     if not allowed:
+#         raise RateLimitExceededError(user_email=user_email, retry_after_seconds=retry_after)
 
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=RegisterUserResponse,
     responses={401: {"model": ErrorResponse}, 429: {"model": ErrorResponse}})
@@ -34,7 +34,12 @@ async def register(
 ) -> RegisterUserResponse:
     return await add_user(db=db, request=request)
 
-@router.post("/login", status_code=status.HTTP_200_OK, response_model=LoginResponse)
+@router.post(
+    "/login",
+    status_code=status.HTTP_200_OK,
+    response_model=LoginResponse,
+    dependencies=[Depends(rate_limit_by_ip("login", times=5, seconds=60))],
+)
 async def login(
     request: LoginRequest,
     db: DBSession,
@@ -52,7 +57,12 @@ async def login(
         user=user,
     )
 
-@router.post("/refresh", status_code=status.HTTP_200_OK, response_model=TokenResponse)
+@router.post(
+    "/refresh",
+    status_code=status.HTTP_200_OK,
+    response_model=TokenResponse,
+    dependencies=[Depends(rate_limit_by_ip("refresh", times=10, seconds=60))],
+)
 async def refresh(
     request: RefreshRequest,
     redis: RedisClient,
@@ -74,7 +84,11 @@ async def logout(
     await auth_service.revoke_session(redis=redis, jti=current_user.jti)
     return None
 
-@router.get("/me", status_code=status.HTTP_200_OK, response_model=UserInfo)
+@router.get("/me",
+    status_code=status.HTTP_200_OK,
+    response_model=UserInfo,
+    dependencies=[Depends(rate_limit_by_user("me", times=60, seconds=60))],
+)
 async def me(
     current_user: CurrentUser,
     redis: RedisClient,

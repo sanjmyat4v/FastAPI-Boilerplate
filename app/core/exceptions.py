@@ -80,15 +80,14 @@ class UserNotFoundError(BaseException):
 
 
 # Rate limit error
-# TODO: Implement rate limit exception properly
 class RateLimitExceededError(BaseException):
     error_code = "RATE_LIMIT_EXCEEDED"
     status_code = 429
 
-    def __init__(self, user_email: str, retry_after_seconds: int) -> None:
+    def __init__(self, identifier: str, retry_after_seconds: int) -> None:
         self.retry_after_seconds = retry_after_seconds
         super().__init__(
-            f"Rate limit exceeded for user {user_email}. " 
+            f"Rate limit exceeded for {identifier}. "
             f"Retry after {retry_after_seconds} seconds."
         )
 
