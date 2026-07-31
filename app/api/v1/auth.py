@@ -26,8 +26,13 @@ router = APIRouter(prefix="/auth", tags=["Auth router"])
 #     if not allowed:
 #         raise RateLimitExceededError(user_email=user_email, retry_after_seconds=retry_after)
 
-@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=RegisterUserResponse,
-    responses={401: {"model": ErrorResponse}, 429: {"model": ErrorResponse}})
+@router.post(
+    "/register",
+    status_code=status.HTTP_201_CREATED,
+    response_model=RegisterUserResponse,
+    responses={401: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
+    dependencies=[Depends(rate_limit_by_user("me", times=60, seconds=60))],
+)
 async def register(
     request: RegisterUserRequest,
     db: DBSession, redis: RedisClient,
